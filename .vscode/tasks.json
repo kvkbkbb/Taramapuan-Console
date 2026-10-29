@@ -1,0 +1,38 @@
+{
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "C/C++: g++.exe build project",
+            "command": "C:\\msys64\\ucrt64\\bin\\g++.exe",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                "-std=c++17",
+                "-I${workspaceFolder}\\include",
+                "${workspaceFolder}\\src\\main.cpp",
+                "${workspaceFolder}\\src\\accounts.cpp",
+                "${workspaceFolder}\\src\\console.cpp",
+                "${workspaceFolder}\\src\\io_util.cpp",
+                "${workspaceFolder}\\src\\paths.cpp",
+                "${workspaceFolder}\\src\\routes.cpp",
+                "${workspaceFolder}\\src\\store.cpp",
+                "${workspaceFolder}\\src\\student_dashboard.cpp",
+                "${workspaceFolder}\\src\\driver_dashboard.cpp",
+                "-o",
+                "${workspaceFolder}\\bin\\taramapuan.exe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Build the Taramapuan Anton Console project."
+        }
+    ],
+    "version": "2.0.0"
+}
