@@ -26,6 +26,8 @@ struct Trip {
     int scheduleNumber = 0;
     int capacity = 0;
     std::string status;
+    std::string routeStops;
+    double distanceKm = 0.0;
 };
 
 struct Reservation {

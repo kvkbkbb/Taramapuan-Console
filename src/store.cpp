@@ -4,6 +4,7 @@
 #include "paths.h"
 #include "routes.h"
 
+#include <cmath>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -35,7 +36,7 @@ Reservation* appendReservationRecord(Store& store, const Reservation& reservatio
     return store.reservations.append(reservation);
 }
 
-bool loadTripsFile(Store& store) {
+bool loadTripsFile(Store& store, bool& requiresRouteMigration) {
     const string tripPath = paths::trips();
     ifstream file;
     if (!openOptionalInput(tripPath, file)) {
@@ -59,6 +60,28 @@ bool loadTripsFile(Store& store) {
             return false;
         }
         record >> ws;
+        if (!record.eof()) {
+            if (!(record >> quoted(trip.routeStops) >> trip.distanceKm)) {
+                cerr << "Invalid route details in " << tripPath << " at line "
+                     << lineNumber << ".\n";
+                return false;
+            }
+            record >> ws;
+            if (!record.eof() || trip.routeStops.empty()
+                || !isfinite(trip.distanceKm) || trip.distanceKm < 0.0) {
+                cerr << "Invalid route details in " << tripPath << " at line "
+                     << lineNumber << ".\n";
+                return false;
+            }
+        } else {
+            if (!routes::scheduledRouteDetails(trip.shuttleNumber, trip.scheduleNumber,
+                                               trip.routeStops, trip.distanceKm)) {
+                cerr << "Could not calculate route details for trip in "
+                     << tripPath << " at line " << lineNumber << ".\n";
+                return false;
+            }
+            requiresRouteMigration = true;
+        }
         const Shuttle* shuttle = routes::findShuttle(trip.shuttleNumber);
         if (!record.eof() || trip.id < 1 || trip.driver.empty()
             || !isValidDate(trip.date) || shuttle == nullptr
@@ -517,7 +540,8 @@ bool saveTrips(const Store& store) {
             file << trip.id << ' ' << quoted(trip.driver) << ' '
                  << trip.date << ' ' << trip.shuttleNumber << ' '
                  << trip.scheduleNumber << ' ' << trip.capacity << ' '
-                 << quoted(trip.status) << '\n';
+                 << quoted(trip.status) << ' ' << quoted(trip.routeStops) << ' '
+                 << fixed << setprecision(1) << trip.distanceKm << '\n';
         }
     });
 }
@@ -567,33 +591,45 @@ bool saveProfiles(const Store& store) {
 }
 
 bool appendTrip(Store& store, const Trip& trip) {
+    Trip savedTrip = trip;
+    if (!routes::scheduledRouteDetails(savedTrip.shuttleNumber,
+                                       savedTrip.scheduleNumber,
+                                       savedTrip.routeStops,
+                                       savedTrip.distanceKm)) {
+        cerr << "Could not calculate route details for trip #"
+             << savedTrip.id << ".\n";
+        return false;
+    }
+
     ofstream file(paths::trips(), ios::app);
     if (!file.is_open()) {
         cerr << "Could not open " << paths::trips() << " for saving.\n";
         return false;
     }
-    file << trip.id << ' ' << quoted(trip.driver) << ' '
-         << trip.date << ' ' << trip.shuttleNumber << ' '
-         << trip.scheduleNumber << ' ' << trip.capacity << ' '
-         << quoted(trip.status) << '\n';
+    file << savedTrip.id << ' ' << quoted(savedTrip.driver) << ' '
+         << savedTrip.date << ' ' << savedTrip.shuttleNumber << ' '
+         << savedTrip.scheduleNumber << ' ' << savedTrip.capacity << ' '
+         << quoted(savedTrip.status) << ' ' << quoted(savedTrip.routeStops) << ' '
+         << fixed << setprecision(1) << savedTrip.distanceKm << '\n';
     file.flush();
     if (!file) {
         cerr << "Could not save trip to " << paths::trips() << ".\n";
         return false;
     }
-    store.trips.push(trip);
+    store.trips.push(savedTrip);
     return true;
 }
 
 bool loadStore(Store& store) {
     routes::initialize();
-    if (!loadTripsFile(store) || !loadReservationsFile(store)
+    bool requiresRouteMigration = false;
+    if (!loadTripsFile(store, requiresRouteMigration) || !loadReservationsFile(store)
         || !loadWaitlistFile(store) || !loadProfilesFile(store)
         || !reservationsMatchTrips(store)) {
         return false;
     }
     rebuildIndexes(store);
-    return true;
+    return !requiresRouteMigration || saveTrips(store);
 }
 
 bool studentHasTripHold(const Store& store, const string& studentId, int tripId) {

@@ -248,7 +248,9 @@ void reserveSeatWithDynamicPath(const std::string& studentId, Store& store) {
     std::cout << "\nProceeding to available scheduled trips for this route...\n";
     Array<Trip*> matchingTrips;
     for (int i = 0; i < store.trips.size(); ++i) {
-        if (store.trips[i].shuttleNumber == shuttleChoice && isOpenTrip(store.trips[i])) {
+        if (store.trips[i].shuttleNumber == shuttleChoice
+            && isOpenTrip(store.trips[i]) && hasFutureDate(store.trips[i])
+            && !tripAtCutoff(store.trips[i])) {
             matchingTrips.push(&store.trips[i]);
         }
     }

@@ -1,5 +1,6 @@
 #include "routes.h"
 
+#include <iomanip>
 #include <iostream>
 
 namespace {
@@ -7,6 +8,45 @@ namespace {
 Array<Shuttle> catalog;
 Array<std::string> names; // Global default stop names
 bool ready = false;
+
+const double spPickupDistances[6][6] = {
+    {0.0, 1.8, 0.0, 0.0, 0.0, 0.0},
+    {1.8, 0.0, 1.3, 0.0, 0.0, 0.0},
+    {0.0, 1.3, 0.0, 1.7, 0.0, 0.0},
+    {0.0, 0.0, 1.7, 0.0, 2.2, 0.0},
+    {0.0, 0.0, 0.0, 2.2, 0.0, 13.5},
+    {0.0, 0.0, 0.0, 0.0, 13.5, 0.0}
+};
+
+const double spDropoffDistances[10][10] = {
+    {0.0, 11.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {11.5, 0.0, 2.8, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 2.8, 0.0, 2.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 2.0, 2.2, 0.0, 1.7, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 1.7, 0.0, 1.3, 0.0, 0.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 1.3, 0.0, 1.5, 2.0, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 1.8, 0.0, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 1.8, 0.0, 2.5, 0.0},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.5, 0.0, 1.2},
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.2, 0.0}
+};
+
+const double staRosaDistances[7][7] = {
+    {0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+    {1.0, 0.0, 8.0, 7.0, 7.0, 1.0, 0.0},
+    {0.0, 8.0, 0.0, 7.0, 1.0, 0.0, 0.0},
+    {0.0, 7.0, 7.0, 0.0, 6.0, 6.0, 0.0},
+    {0.0, 7.0, 1.0, 6.0, 0.0, 0.0, 0.5},
+    {0.0, 1.0, 0.0, 6.0, 0.0, 0.0, 1.0},
+    {0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 0.0}
+};
+
+const double calambaDistances[4][4] = {
+    {0.0, 2.0, 0.0, 0.0},
+    {2.0, 0.0, 3.0, 0.0},
+    {0.0, 3.0, 0.0, 4.0},
+    {0.0, 0.0, 4.0, 0.0}
+};
 
 // 1. San Pedro - Incoming (Pickup - 6 nodes: 0 to 5)
 // Astrodome (0), Pacita 1 (1), Chrysanthemum (2), Rosario (3), Southwoods (4), MCL (5)
@@ -28,6 +68,75 @@ Array<std::string> staRosaStops;
 // MMCL (0), Batino (1), Real (2), SM (3)
 Graph calambaGraph(4);
 Array<std::string> calambaStops;
+
+double edgeDistance(int shuttleNumber, bool isIncoming, int from, int to) {
+    if (shuttleNumber == 1) {
+        if (isIncoming) {
+            return from >= 0 && from < 6 && to >= 0 && to < 6
+                ? spPickupDistances[from][to] : 0.0;
+        }
+        return from >= 0 && from < 10 && to >= 0 && to < 10
+            ? spDropoffDistances[from][to] : 0.0;
+    }
+    if (shuttleNumber == 2) {
+        return from >= 0 && from < 7 && to >= 0 && to < 7
+            ? staRosaDistances[from][to] : 0.0;
+    }
+    if (shuttleNumber == 3) {
+        return from >= 0 && from < 4 && to >= 0 && to < 4
+            ? calambaDistances[from][to] : 0.0;
+    }
+    return 0.0;
+}
+
+bool buildScheduledPath(int shuttleNumber, int scheduleNumber,
+                        bool& isIncoming, Array<int>& path) {
+    const Shuttle* shuttle = routes::findShuttle(shuttleNumber);
+    if (shuttle == nullptr || scheduleNumber < 1
+        || scheduleNumber > shuttle->schedules.size()) {
+        return false;
+    }
+
+    isIncoming = shuttle->schedules[scheduleNumber - 1].direction.find("Incoming") == 0;
+    if (shuttleNumber == 1) {
+        path = isIncoming ? spPickupGraph.bfsPath(0, 5)
+                          : spDropoffGraph.bfsPath(0, 9);
+    } else if (shuttleNumber == 2) {
+        path = isIncoming ? staRosaGraph.bfsPath(4, 0)
+                          : staRosaGraph.bfsPath(0, 4);
+    } else {
+        path = isIncoming ? calambaGraph.bfsPath(3, 0)
+                          : calambaGraph.bfsPath(0, 3);
+    }
+    return !path.empty();
+}
+
+bool formatPathDetails(int shuttleNumber, bool isIncoming, const Array<int>& path,
+                       std::string& routeStops, double& totalDistance) {
+    const Array<std::string> stops = routes::getStopList(shuttleNumber, isIncoming);
+    if (path.empty()) {
+        return false;
+    }
+
+    routeStops.clear();
+    totalDistance = 0.0;
+    for (int i = 0; i < path.size(); ++i) {
+        if (path[i] < 0 || path[i] >= stops.size()) {
+            return false;
+        }
+        if (i > 0) {
+            const double distance = edgeDistance(shuttleNumber, isIncoming,
+                                                 path[i - 1], path[i]);
+            if (distance <= 0.0) {
+                return false;
+            }
+            routeStops += " -> ";
+            totalDistance += distance;
+        }
+        routeStops += "[" + stops[path[i]] + "]";
+    }
+    return true;
+}
 
 void addSchedule(Shuttle& shuttle, const char* direction, const char* time) {
     Schedule schedule;
@@ -270,19 +379,32 @@ Array<int> computeDynamicPath(int shuttleNumber, bool isIncoming, int chosenStop
 }
 
 void printDynamicRoute(int shuttleNumber, bool isIncoming, const Array<int>& path) {
-    Array<std::string> stops = getStopList(shuttleNumber, isIncoming);
-    if (path.empty()) {
+    initialize();
+    std::string routeStops;
+    double totalDistance = 0.0;
+    if (!formatPathDetails(shuttleNumber, isIncoming, path, routeStops, totalDistance)) {
         std::cout << "(No connecting path available)\n";
         return;
     }
-    std::cout << "\n>> Updated Dynamic Route Path (BFS):\n   ";
-    for (int i = 0; i < path.size(); ++i) {
-        std::cout << "[" << stops[path[i]] << "]";
-        if (i + 1 < path.size()) {
-            std::cout << " -> ";
-        }
+    std::cout << "\n>> Updated Dynamic Route Path (BFS):\n   " << routeStops;
+    const std::ios::fmtflags previousFlags = std::cout.flags();
+    const std::streamsize previousPrecision = std::cout.precision();
+    std::cout << "\nTotal Path Distance: " << std::fixed << std::setprecision(1)
+              << totalDistance << " km\n";
+    std::cout.flags(previousFlags);
+    std::cout.precision(previousPrecision);
+}
+
+bool scheduledRouteDetails(int shuttleNumber, int scheduleNumber,
+                           std::string& routeStops, double& totalDistance) {
+    initialize();
+    bool isIncoming = false;
+    Array<int> path;
+    if (!buildScheduledPath(shuttleNumber, scheduleNumber, isIncoming, path)) {
+        return false;
     }
-    std::cout << "\n";
+    return formatPathDetails(shuttleNumber, isIncoming, path,
+                             routeStops, totalDistance);
 }
 
 }

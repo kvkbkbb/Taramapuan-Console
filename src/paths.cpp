@@ -54,6 +54,9 @@ bool tryUse(const std::filesystem::path& dir, bool createIfMissing) {
 }
 
 std::string joinFile(const char* fileName) {
+    if (!paths::initialize()) {
+        return {};
+    }
     return (std::filesystem::path(g_dataDir) / fileName).string();
 }
 
