@@ -5,6 +5,8 @@
 
 namespace {
 
+const double minutesPerKilometer = 2.0;
+
 Array<Shuttle> catalog;
 Array<std::string> names; // Global default stop names
 bool ready = false;
@@ -378,19 +380,124 @@ Array<int> computeDynamicPath(int shuttleNumber, bool isIncoming, int chosenStop
     }
 }
 
+bool dynamicRouteDetails(int shuttleNumber, bool isIncoming, const Array<int>& path,
+                         std::string& routeStops, double& totalDistance) {
+    initialize();
+    return formatPathDetails(shuttleNumber, isIncoming, path, routeStops, totalDistance);
+}
+
+bool combinedRouteDetails(int shuttleNumber, bool isIncoming,
+                          const Array<int>& selectedStops,
+                          std::string& routeStops, double& totalDistance) {
+    initialize();
+    const Graph* graph = nullptr;
+    int campusIndex = 0;
+    if (shuttleNumber == 1) {
+        graph = isIncoming ? &spPickupGraph : &spDropoffGraph;
+        campusIndex = isIncoming ? 5 : 0;
+    } else if (shuttleNumber == 2) {
+        graph = &staRosaGraph;
+    } else if (shuttleNumber == 3) {
+        graph = &calambaGraph;
+    } else {
+        return false;
+    }
+
+    Array<int> orderedStops;
+    const Array<std::string> stops = getStopList(shuttleNumber, isIncoming);
+    for (int i = 0; i < selectedStops.size(); ++i) {
+        const int stop = selectedStops[i];
+        if (stop < 0 || stop >= stops.size() || stop == campusIndex) {
+            return false;
+        }
+        bool alreadyIncluded = false;
+        for (int j = 0; j < orderedStops.size(); ++j) {
+            if (orderedStops[j] == stop) {
+                alreadyIncluded = true;
+                break;
+            }
+        }
+        if (!alreadyIncluded) {
+            orderedStops.push(stop);
+        }
+    }
+    if (orderedStops.empty()) {
+        return false;
+    }
+
+    for (int i = 1; i < orderedStops.size(); ++i) {
+        const int stop = orderedStops[i];
+        const int stopHops = graph->bfsPath(campusIndex, stop).size();
+        int position = i;
+        while (position > 0) {
+            const int previous = orderedStops[position - 1];
+            const int previousHops = graph->bfsPath(campusIndex, previous).size();
+            const bool shouldComeFirst = isIncoming
+                ? (stopHops > previousHops
+                   || (stopHops == previousHops && stop < previous))
+                : (stopHops < previousHops
+                   || (stopHops == previousHops && stop < previous));
+            if (!shouldComeFirst) {
+                break;
+            }
+            orderedStops[position] = previous;
+            --position;
+        }
+        orderedStops[position] = stop;
+    }
+
+    Array<int> path;
+    int current = campusIndex;
+    if (isIncoming) {
+        current = orderedStops[0];
+        path.push(current);
+    } else {
+        path.push(current);
+    }
+    const int firstTarget = isIncoming ? 1 : 0;
+    for (int i = firstTarget; i < orderedStops.size(); ++i) {
+        const Array<int> segment = graph->bfsPath(current, orderedStops[i]);
+        if (segment.empty()) {
+            return false;
+        }
+        for (int j = 1; j < segment.size(); ++j) {
+            path.push(segment[j]);
+        }
+        current = orderedStops[i];
+    }
+    if (isIncoming) {
+        const Array<int> segment = graph->bfsPath(current, campusIndex);
+        if (segment.empty()) {
+            return false;
+        }
+        for (int i = 1; i < segment.size(); ++i) {
+            path.push(segment[i]);
+        }
+    }
+    return formatPathDetails(shuttleNumber, isIncoming, path,
+                             routeStops, totalDistance);
+}
+
+double estimatedDurationMinutes(double distanceKm) {
+    return distanceKm * minutesPerKilometer;
+}
+
 void printDynamicRoute(int shuttleNumber, bool isIncoming, const Array<int>& path) {
     initialize();
     std::string routeStops;
     double totalDistance = 0.0;
-    if (!formatPathDetails(shuttleNumber, isIncoming, path, routeStops, totalDistance)) {
+    if (!dynamicRouteDetails(shuttleNumber, isIncoming, path, routeStops, totalDistance)) {
         std::cout << "(No connecting path available)\n";
         return;
     }
     std::cout << "\n>> Updated Dynamic Route Path (BFS):\n   " << routeStops;
     const std::ios::fmtflags previousFlags = std::cout.flags();
     const std::streamsize previousPrecision = std::cout.precision();
-    std::cout << "\nTotal Path Distance: " << std::fixed << std::setprecision(1)
-              << totalDistance << " km\n";
+    const double durationMinutes = estimatedDurationMinutes(totalDistance);
+    std::cout << "\nEstimated Shortest Path Duration: " << std::defaultfloat
+              << std::setprecision(6) << durationMinutes << " minutes\n"
+              << "Distance: " << std::fixed
+              << std::setprecision(1) << totalDistance << " km\n";
     std::cout.flags(previousFlags);
     std::cout.precision(previousPrecision);
 }

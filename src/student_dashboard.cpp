@@ -242,15 +242,34 @@ void reserveSeatWithDynamicPath(const std::string& studentId, Store& store) {
 
     // 4. Compute and Print Dynamic Shortest Path via BFS
     Array<int> calculatedPath = routes::computeDynamicPath(shuttleChoice, isIncoming, chosenStopIndex);
+    std::string passengerRoute;
+    double passengerDistanceKm = 0.0;
+    if (!routes::dynamicRouteDetails(shuttleChoice, isIncoming, calculatedPath,
+                                     passengerRoute, passengerDistanceKm)) {
+        std::cout << "(No connecting path available)\n";
+        return;
+    }
     routes::printDynamicRoute(shuttleChoice, isIncoming, calculatedPath);
 
     // 5. Filter and proceed to seat reservation for this specific shuttle
     std::cout << "\nProceeding to available scheduled trips for this route...\n";
     Array<Trip*> matchingTrips;
+    const Shuttle* selectedShuttle = routes::findShuttle(shuttleChoice);
     for (int i = 0; i < store.trips.size(); ++i) {
-        if (store.trips[i].shuttleNumber == shuttleChoice
-            && isOpenTrip(store.trips[i]) && hasFutureDate(store.trips[i])
-            && !tripAtCutoff(store.trips[i])) {
+        const Trip& trip = store.trips[i];
+        if (trip.shuttleNumber != shuttleChoice || !isOpenTrip(trip)
+            || !hasFutureDate(trip) || tripAtCutoff(trip)) {
+            continue;
+        }
+        if (trip.scheduleNumber < 1
+            || trip.scheduleNumber > selectedShuttle->schedules.size()) {
+            std::cerr << "Trip #" << trip.id
+                      << " has an invalid schedule and cannot be reserved.\n";
+            continue;
+        }
+        const std::string& scheduleDirection =
+            selectedShuttle->schedules[trip.scheduleNumber - 1].direction;
+        if ((scheduleDirection.find("Incoming") == 0) == isIncoming) {
             matchingTrips.push(&store.trips[i]);
         }
     }
@@ -291,6 +310,7 @@ void reserveSeatWithDynamicPath(const std::string& studentId, Store& store) {
     request.tripId = targetTripId;
     request.paymentMethod = paymentMethod;
     request.referenceNumber = reference;
+    request.stopIndex = chosenStopIndex;
 
     std::string outcome;
     if (submitReservationRequest(store, request, outcome)) {

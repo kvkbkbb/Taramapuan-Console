@@ -42,6 +42,9 @@ struct Reservation {
     std::string referenceNumber;
     std::string ticketCode;
     int seatNumber = 0;
+    int stopIndex = -1;
+    std::string routeStops;
+    double distanceKm = 0.0;
 };
 
 struct WaitlistEntry {
@@ -49,6 +52,7 @@ struct WaitlistEntry {
     std::string studentId;
     std::string paymentMethod;
     std::string referenceNumber;
+    int stopIndex = -1;
 };
 
 struct ReservationRequest {
@@ -56,6 +60,7 @@ struct ReservationRequest {
     int tripId = 0;
     std::string paymentMethod;
     std::string referenceNumber;
+    int stopIndex = -1;
 };
 
 struct StudentProfile {

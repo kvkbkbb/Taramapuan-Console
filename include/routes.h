@@ -23,6 +23,12 @@ void printBfsRoute(int shuttleNumber);
 // ==========================================
 Array<std::string> getStopList(int shuttleNumber, bool isIncoming);
 Array<int> computeDynamicPath(int shuttleNumber, bool isIncoming, int chosenStopIndex);
+bool dynamicRouteDetails(int shuttleNumber, bool isIncoming, const Array<int>& path,
+                         std::string& routeStops, double& totalDistance);
+bool combinedRouteDetails(int shuttleNumber, bool isIncoming,
+                          const Array<int>& selectedStops,
+                          std::string& routeStops, double& totalDistance);
+double estimatedDurationMinutes(double distanceKm);
 void printDynamicRoute(int shuttleNumber, bool isIncoming, const Array<int>& path);
 bool scheduledRouteDetails(int shuttleNumber, int scheduleNumber,
                            std::string& routeStops, double& totalDistance);

@@ -36,6 +36,98 @@ Reservation* appendReservationRecord(Store& store, const Reservation& reservatio
     return store.reservations.append(reservation);
 }
 
+bool calculatePassengerTripRoute(const Store& store, int tripId, int newStopIndex,
+                                 string& routeStops, double& totalDistance) {
+    const Trip* trip = findTrip(store, tripId);
+    if (trip == nullptr) {
+        return false;
+    }
+    const Shuttle* shuttle = routes::findShuttle(trip->shuttleNumber);
+    if (shuttle == nullptr || trip->scheduleNumber < 1
+        || trip->scheduleNumber > shuttle->schedules.size()) {
+        return false;
+    }
+    const bool isIncoming =
+        shuttle->schedules[trip->scheduleNumber - 1].direction.find("Incoming") == 0;
+    Array<int> selectedStops;
+    for (auto* node = store.reservations.head(); node != nullptr; node = node->next) {
+        const Reservation& reservation = node->value;
+        if (reservation.tripId == tripId && occupiesSeat(reservation)
+            && reservation.stopIndex >= 0) {
+            selectedStops.push(reservation.stopIndex);
+        }
+    }
+    if (newStopIndex >= 0) {
+        selectedStops.push(newStopIndex);
+    } else if (selectedStops.empty()) {
+        routeStops = trip->routeStops;
+        totalDistance = trip->distanceKm;
+        return !routeStops.empty();
+    }
+    return routes::combinedRouteDetails(trip->shuttleNumber, isIncoming,
+                                        selectedStops, routeStops, totalDistance);
+}
+
+void updatePassengerTripRoutes(Store& store, int tripId, const string& routeStops,
+                               double totalDistance) {
+    for (auto* node = store.reservations.head(); node != nullptr; node = node->next) {
+        Reservation& reservation = node->value;
+        if (reservation.tripId == tripId && occupiesSeat(reservation)
+            && reservation.stopIndex >= 0) {
+            reservation.routeStops = routeStops;
+            reservation.distanceKm = totalDistance;
+        }
+    }
+}
+
+bool refreshPassengerTripRoute(Store& store, int tripId) {
+    const Trip* trip = findTrip(store, tripId);
+    if (trip == nullptr) {
+        return false;
+    }
+    const Shuttle* shuttle = routes::findShuttle(trip->shuttleNumber);
+    if (shuttle == nullptr || trip->scheduleNumber < 1
+        || trip->scheduleNumber > shuttle->schedules.size()) {
+        cerr << "Could not refresh the passenger route for trip #"
+             << tripId << ": invalid shuttle schedule.\n";
+        return false;
+    }
+    const bool isIncoming =
+        shuttle->schedules[trip->scheduleNumber - 1].direction.find("Incoming") == 0;
+    Array<int> selectedStops;
+    for (auto* node = store.reservations.head(); node != nullptr; node = node->next) {
+        const Reservation& reservation = node->value;
+        if (reservation.tripId == tripId && occupiesSeat(reservation)
+            && reservation.stopIndex >= 0) {
+            selectedStops.push(reservation.stopIndex);
+        }
+    }
+    if (selectedStops.empty()) {
+        return false;
+    }
+    string routeStops;
+    double totalDistance = 0.0;
+    if (!routes::combinedRouteDetails(trip->shuttleNumber, isIncoming,
+                                      selectedStops, routeStops, totalDistance)) {
+        cerr << "Could not refresh the passenger route for trip #"
+             << tripId << ".\n";
+        return false;
+    }
+    bool changed = false;
+    for (auto* node = store.reservations.head(); node != nullptr; node = node->next) {
+        Reservation& reservation = node->value;
+        if (reservation.tripId == tripId && occupiesSeat(reservation)
+            && reservation.stopIndex >= 0
+            && (reservation.routeStops != routeStops
+                || reservation.distanceKm != totalDistance)) {
+            reservation.routeStops = routeStops;
+            reservation.distanceKm = totalDistance;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 bool loadTripsFile(Store& store, bool& requiresRouteMigration) {
     const string tripPath = paths::trips();
     ifstream file;
@@ -129,7 +221,28 @@ bool loadReservationsFile(Store& store) {
                    >> quoted(reservation.ticketCode)
                    >> reservation.seatNumber) {
             record >> ws;
-            if (!record.eof() || reservation.studentId.empty()
+            if (!record.eof()) {
+                if (!(record >> quoted(reservation.routeStops)
+                             >> reservation.distanceKm)) {
+                    cerr << "Invalid reservation route details in "
+                         << paths::reservations() << " at line "
+                         << lineNumber << ".\n";
+                    return false;
+                }
+                record >> ws;
+                if (!record.eof()) {
+                    if (!(record >> reservation.stopIndex)) {
+                        cerr << "Invalid reservation stop in "
+                             << paths::reservations() << " at line "
+                             << lineNumber << ".\n";
+                        return false;
+                    }
+                    record >> ws;
+                }
+            }
+            if (!record.eof() || reservation.stopIndex < -1
+                || !isfinite(reservation.distanceKm)
+                || reservation.distanceKm < 0.0 || reservation.studentId.empty()
                 || !isValidDate(reservation.date) || reservation.tripId < 1
                 || !isValidPayment(reservation.paymentMethod)
                 || (reservation.paymentStatus != "Pending"
@@ -218,7 +331,16 @@ bool loadWaitlistFile(Store& store) {
             return false;
         }
         record >> ws;
-        if (!record.eof() || entry.tripId < 1 || entry.studentId.empty()
+        if (!record.eof()) {
+            if (!(record >> entry.stopIndex)) {
+                cerr << "Invalid waitlist stop in " << paths::waitlist()
+                     << " at line " << lineNumber << ".\n";
+                return false;
+            }
+            record >> ws;
+        }
+        if (!record.eof() || entry.stopIndex < -1
+            || entry.tripId < 1 || entry.studentId.empty()
             || !isValidPayment(entry.paymentMethod)) {
             cerr << "Invalid waitlist record in " << paths::waitlist() << " at line "
                  << lineNumber << ".\n";
@@ -565,7 +687,10 @@ bool saveReservations(const Store& store) {
                      << quoted(reservation.status) << ' '
                      << quoted(reservation.referenceNumber) << ' '
                      << quoted(reservation.ticketCode) << ' '
-                     << reservation.seatNumber << '\n';
+                     << reservation.seatNumber << ' '
+                     << quoted(reservation.routeStops) << ' '
+                     << fixed << setprecision(1) << reservation.distanceKm << ' '
+                     << reservation.stopIndex << '\n';
             }
         }
     });
@@ -576,7 +701,8 @@ bool saveWaitlist(const Store& store) {
         store.waitlist.forEach([&file](const WaitlistEntry& entry) {
             file << entry.tripId << ' ' << quoted(entry.studentId) << ' '
                  << quoted(entry.paymentMethod) << ' '
-                 << quoted(entry.referenceNumber) << '\n';
+                 << quoted(entry.referenceNumber) << ' '
+                 << entry.stopIndex << '\n';
         });
     });
 }
@@ -682,13 +808,31 @@ bool submitReservationRequest(Store& store, const ReservationRequest& request,
             outcome = "That reference number is already logged.";
             continue;
         }
+        if (current.stopIndex < 0) {
+            outcome = "A valid passenger stop is required for this reservation.";
+            continue;
+        }
 
         if (activePassengerCount(store, current.tripId) >= trip->capacity) {
+            Array<int> requestedStops;
+            requestedStops.push(current.stopIndex);
+            const Shuttle* shuttle = routes::findShuttle(trip->shuttleNumber);
+            const bool isIncoming = shuttle->schedules[trip->scheduleNumber - 1]
+                                        .direction.find("Incoming") == 0;
+            string requestedRoute;
+            double requestedDistance = 0.0;
+            if (!routes::combinedRouteDetails(trip->shuttleNumber, isIncoming,
+                                              requestedStops, requestedRoute,
+                                              requestedDistance)) {
+                outcome = "Could not calculate the selected stop route.";
+                continue;
+            }
             WaitlistEntry entry;
             entry.tripId = current.tripId;
             entry.studentId = current.studentId;
             entry.paymentMethod = current.paymentMethod;
             entry.referenceNumber = current.referenceNumber;
+            entry.stopIndex = current.stopIndex;
             if (!enqueueWaitlist(store, entry)) {
                 outcome = "Waitlist request could not be saved.";
                 continue;
@@ -712,11 +856,22 @@ bool submitReservationRequest(Store& store, const ReservationRequest& request,
         reservation.referenceNumber = current.referenceNumber;
         reservation.seatNumber = nextSeatNumber(store, current.tripId, trip->capacity);
         reservation.ticketCode = makeTicketCode(reservation);
+        reservation.stopIndex = current.stopIndex;
+        if (!calculatePassengerTripRoute(store, trip->id, current.stopIndex,
+                                         reservation.routeStops,
+                                         reservation.distanceKm)) {
+            cerr << "Could not calculate the combined passenger route for trip #"
+                 << trip->id << ".\n";
+            outcome = "Could not calculate the passenger route.";
+            continue;
+        }
         Reservation* saved = appendReservationRecord(store, reservation);
         if (saved == nullptr) {
             outcome = "Reservation could not be created.";
             continue;
         }
+        updatePassengerTripRoutes(store, trip->id, reservation.routeStops,
+                                  reservation.distanceKm);
         upsertProfile(store, current.studentId, current.paymentMethod);
         if (!saveReservations(store) || !saveProfiles(store)) {
             outcome = "Reservation was not created because it could not be saved.";
@@ -761,6 +916,21 @@ bool promoteWaitlistForTrip(Store& store, int tripId) {
             continue;
         }
 
+        string routeStops;
+        double distanceKm = 0.0;
+        if (!calculatePassengerTripRoute(store, tripId, chosen.stopIndex,
+                                         routeStops, distanceKm)) {
+            cerr << "Could not calculate the combined passenger route for trip #"
+                 << tripId << "; retaining the waitlist request.\n";
+            Queue<WaitlistEntry> restored;
+            restored.enqueue(chosen);
+            while (!store.waitlist.empty()) {
+                restored.enqueue(store.waitlist.front());
+                store.waitlist.dequeue();
+            }
+            store.waitlist = restored;
+            break;
+        }
         Reservation reservation;
         reservation.studentId = chosen.studentId;
         reservation.date = trip->date;
@@ -773,15 +943,27 @@ bool promoteWaitlistForTrip(Store& store, int tripId) {
         reservation.referenceNumber = chosen.referenceNumber;
         reservation.seatNumber = nextSeatNumber(store, tripId, trip->capacity);
         reservation.ticketCode = makeTicketCode(reservation);
+        reservation.stopIndex = chosen.stopIndex;
+        reservation.routeStops = routeStops;
+        reservation.distanceKm = distanceKm;
         Reservation* saved = appendReservationRecord(store, reservation);
+        if (saved != nullptr) {
+            updatePassengerTripRoutes(store, tripId, routeStops, distanceKm);
+        }
         if (saved != nullptr && !saved->referenceNumber.empty()) {
             store.paymentRefs.put(saved->referenceNumber, saved);
         }
         upsertProfile(store, chosen.studentId, chosen.paymentMethod);
         promoted = true;
     }
+    const bool routeChanged = refreshPassengerTripRoute(store, tripId);
+    if (promoted || routeChanged) {
+        if (!saveReservations(store)) {
+            cerr << "Passenger routes could not be saved for trip #"
+                 << tripId << ".\n";
+        }
+    }
     if (promoted) {
-        saveReservations(store);
         saveWaitlist(store);
         saveProfiles(store);
         rebuildIndexes(store);
@@ -848,13 +1030,34 @@ void collectAssignedTrips(Store& store, const string& driver, bool openOnly,
 
 void printDigitalPass(const Reservation& reservation, const Store& store) {
     cout << "\n========== DIGITAL PASS ==========\n";
+    const Trip* trip = nullptr;
     if (reservation.tripId == 0) {
         cout << "Legacy reservation without a dated trip.\n";
     } else {
-        const Trip* trip = findTrip(store, reservation.tripId);
+        trip = findTrip(store, reservation.tripId);
         if (trip != nullptr) {
             cout << tripDescription(*trip) << '\n';
         }
+    }
+    const bool usingScheduledRoute = reservation.routeStops.empty() && trip != nullptr;
+    const string& routeStops =
+        usingScheduledRoute ? trip->routeStops : reservation.routeStops;
+    const double distanceKm =
+        usingScheduledRoute ? trip->distanceKm : reservation.distanceKm;
+    if (!routeStops.empty()) {
+        const ios::fmtflags previousFlags = cout.flags();
+        const streamsize previousPrecision = cout.precision();
+        cout << (usingScheduledRoute
+                     ? "Scheduled route (selected stop not recorded): "
+                     : "Shared trip route: ")
+             << routeStops << '\n'
+             << "Estimated duration: " << defaultfloat << setprecision(6)
+             << routes::estimatedDurationMinutes(distanceKm)
+             << " minutes\n"
+             << "Passenger route distance: " << fixed << setprecision(1)
+             << distanceKm << " km\n";
+        cout.flags(previousFlags);
+        cout.precision(previousPrecision);
     }
     cout << "Student ID: " << reservation.studentId << '\n'
          << "Seat: " << (reservation.seatNumber > 0
